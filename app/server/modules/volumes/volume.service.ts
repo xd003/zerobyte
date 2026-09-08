@@ -17,6 +17,7 @@ import { logger } from "@zerobyte/core/node";
 import { serverEvents } from "../../core/events";
 import type { Volume } from "../../db/schema";
 import { volumeConfigSchema, type BackendConfig } from "@zerobyte/contracts/volumes";
+
 import { getOrganizationId } from "~/server/core/request-context";
 import { type ShortId } from "~/server/utils/branded";
 import { normalizeRequiredName } from "~/server/utils/names";
@@ -45,9 +46,10 @@ const findVolume = async (shortId: ShortId) => {
 	});
 };
 
+// Never resolves secrets: unmount and health checks only inspect an existing mount. Callers
+// mounting must pass a volume with decrypted config, prepared before any side effects.
 const runVolumeBackendOperation = async (volume: Volume, operation: "mount" | "unmount" | "checkHealth") => {
-	const config = await decryptVolumeConfig(volume.config);
-	return createVolumeBackend({ ...volume, config })[operation]();
+	return createVolumeBackend(volume)[operation]();
 };
 
 const createVolume = async (name: string, backendConfig: BackendConfig) => {
@@ -77,7 +79,10 @@ const createVolume = async (name: string, backendConfig: BackendConfig) => {
 		throw new InternalServerError("Failed to create volume");
 	}
 
-	const { error, status } = await runVolumeBackendOperation(created, "mount");
+	const { error, status } = await runVolumeBackendOperation(
+		{ ...created, config: await decryptVolumeConfig(created.config) },
+		"mount",
+	);
 
 	await db
 		.update(volumesTable)
@@ -115,6 +120,7 @@ const mountVolume = async (shortId: ShortId, signal?: AbortSignal) => {
 		return checkHealth(shortId);
 	}
 
+	const resolvedVolume = { ...volume, config: await decryptVolumeConfig(volume.config) };
 	const unmount = await runVolumeBackendOperation(volume, "unmount");
 
 	if (signal?.aborted) {
@@ -131,7 +137,7 @@ const mountVolume = async (shortId: ShortId, signal?: AbortSignal) => {
 		signal.throwIfAborted();
 	}
 
-	const { error, status } = await runVolumeBackendOperation(volume, "mount");
+	const { error, status } = await runVolumeBackendOperation(resolvedVolume, "mount");
 
 	await db
 		.update(volumesTable)
@@ -208,29 +214,39 @@ const updateVolume = async (shortId: ShortId, volumeData: UpdateVolumeBody) => {
 		throw new BadRequestError("Volume name cannot be empty");
 	}
 
-	const configChanged =
-		JSON.stringify(existing.config) !== JSON.stringify(volumeData.config) && volumeData.config !== undefined;
+	const existingConfigResult = volumeConfigSchema.safeParse(existing.config);
+	if (!existingConfigResult.success) {
+		throw new InternalServerError("Invalid existing volume configuration");
+	}
+
+	let configChanged = false;
+	let encryptedConfig = existing.config;
+	let resolvedConfig = existing.config;
+	if (volumeData.config !== undefined) {
+		const newConfigResult = volumeConfigSchema.safeParse(volumeData.config);
+		if (!newConfigResult.success) {
+			throw new BadRequestError("Invalid volume configuration");
+		}
+
+		configChanged = JSON.stringify(existingConfigResult.data) !== JSON.stringify(newConfigResult.data);
+		if (configChanged) {
+			encryptedConfig = await encryptVolumeConfig(newConfigResult.data);
+			resolvedConfig = await decryptVolumeConfig(newConfigResult.data);
+		}
+	}
 
 	if (configChanged) {
 		logger.debug("Unmounting existing volume before applying new config");
 		await runVolumeBackendOperation(existing, "unmount");
 	}
 
-	const newConfigResult = volumeConfigSchema.safeParse(volumeData.config || existing.config);
-	if (!newConfigResult.success) {
-		throw new BadRequestError("Invalid volume configuration");
-	}
-	const newConfig = newConfigResult.data;
-
-	const encryptedConfig = await encryptVolumeConfig(newConfig);
-
 	const [updated] = await db
 		.update(volumesTable)
 		.set({
 			name: normalizedName,
 			config: encryptedConfig,
-			type: volumeData.config?.backend,
-			autoRemount: volumeData.autoRemount,
+			type: volumeData.config?.backend ?? existing.type,
+			autoRemount: volumeData.autoRemount ?? existing.autoRemount,
 			updatedAt: Date.now(),
 		})
 		.where(and(eq(volumesTable.id, existing.id), eq(volumesTable.organizationId, organizationId)))
@@ -241,7 +257,7 @@ const updateVolume = async (shortId: ShortId, volumeData: UpdateVolumeBody) => {
 	}
 
 	if (configChanged) {
-		const { error, status } = await runVolumeBackendOperation(updated, "mount");
+		const { error, status } = await runVolumeBackendOperation({ ...updated, config: resolvedConfig }, "mount");
 		await db
 			.update(volumesTable)
 			.set({ status, lastError: error ?? null, lastHealthCheck: Date.now() })
@@ -254,7 +270,9 @@ const updateVolume = async (shortId: ShortId, volumeData: UpdateVolumeBody) => {
 };
 
 const testConnection = async (backendConfig: BackendConfig) => {
-	return Effect.runPromise(testVolumeConnection(backendConfig));
+	const resolvedConfig = await decryptVolumeConfig(backendConfig);
+
+	return Effect.runPromise(testVolumeConnection(resolvedConfig));
 };
 
 const checkHealth = async (shortId: ShortId) => {
