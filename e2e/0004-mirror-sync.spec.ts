@@ -19,12 +19,6 @@ type MirrorAssignmentSummary = {
 	} | null;
 };
 
-type MirrorSyncStatus = {
-	sourceCount: number;
-	mirrorCount: number;
-	missingSnapshots: unknown[];
-};
-
 function getRunId(testInfo: TestInfo) {
 	return `${testInfo.parallelIndex}-${testInfo.retry}-${randomUUID().slice(0, 8)}`;
 }
@@ -109,15 +103,26 @@ async function waitForMirrorSyncComplete(page: Page, backupShortId: string, mirr
 		const mirrors = (await mirrorsResponse.json()) as MirrorAssignmentSummary[];
 		const mirror = mirrors.find((entry) => entry.repositoryId === mirrorRepoShortId);
 		expect(mirror?.lastSyncTask?.status).toBe("succeeded");
+	}).toPass({ timeout: 30000 });
 
-		const statusResponse = await page.request.get(
-			`/api/v1/backups/${backupShortId}/mirrors/${mirrorRepoShortId}/status`,
-		);
-		expect(statusResponse.ok()).toBe(true);
-		const status = (await statusResponse.json()) as MirrorSyncStatus;
-		expect(status.sourceCount).toBe(1);
-		expect(status.mirrorCount).toBe(1);
-		expect(status.missingSnapshots).toHaveLength(0);
+	const startResponse = await page.request.post(
+		`/api/v1/backups/${backupShortId}/mirrors/${mirrorRepoShortId}/status`,
+	);
+	expect(startResponse.status()).toBe(202);
+	const { taskId } = await startResponse.json();
+
+	await expect(async () => {
+		const taskResponse = await page.request.get(`/api/v1/tasks/${taskId}`);
+		expect(taskResponse.status()).toBe(200);
+		expect(await taskResponse.json()).toMatchObject({
+			status: "succeeded",
+			result: {
+				kind: "mirrorStatus",
+				sourceCount: 1,
+				mirrorCount: 1,
+				missingSnapshots: [],
+			},
+		});
 	}).toPass({ timeout: 30000 });
 }
 
