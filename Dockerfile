@@ -92,7 +92,7 @@ COPY ./apps/agent/package.json ./apps/agent/package.json
 COPY ./apps/docs/package.json ./apps/docs/package.json
 COPY ./apps/desktop/package.json ./apps/desktop/package.json
 
-RUN VITE_GIT_HOOKS=0 bun install --frozen-lockfile --ignore-scripts
+RUN VITE_GIT_HOOKS=0 bun install --frozen-lockfile --ignore-scripts --filter '!docs'
 
 COPY . .
 
@@ -118,7 +118,7 @@ COPY ./apps/agent/package.json ./apps/agent/package.json
 COPY ./apps/docs/package.json ./apps/docs/package.json
 COPY ./apps/desktop/package.json ./apps/desktop/package.json
 
-RUN VITE_GIT_HOOKS=0 bun install --frozen-lockfile
+RUN VITE_GIT_HOOKS=0 bun install --frozen-lockfile --filter '!docs'
 
 COPY . .
 
