@@ -1,7 +1,9 @@
-import { spawn, execFile, type ExecException, type ExecFileOptions } from "node:child_process";
+import { spawn, execFile, type ChildProcess, type ExecException, type ExecFileOptions } from "node:child_process";
+import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { setPriority } from "node:os";
 import { createInterface } from "node:readline";
+import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 
 type ExecProps = {
@@ -10,18 +12,60 @@ type ExecProps = {
 	env?: NodeJS.ProcessEnv;
 } & ExecFileOptions;
 
+const activeChildren = new Set<ChildProcess>();
+
+const trackChild = (child: ChildProcess) => {
+	if (child.pid === undefined) return;
+
+	activeChildren.add(child);
+	const untrack = () => activeChildren.delete(child);
+	child.once("exit", untrack);
+	child.once("error", untrack);
+};
+
+const hasExited = (child: ChildProcess) => child.exitCode !== null || child.signalCode !== null;
+
+/**
+ * Interrupts every child started through safeSpawn/safeExec and waits for them to exit.
+ * SIGINT lets restic release its repository lock; children still alive after graceMs are SIGKILLed.
+ * Returns the number of children that were interrupted.
+ */
+export const terminateChildProcesses = async (graceMs = 15_000) => {
+	const children = [...activeChildren].filter((child) => !hasExited(child));
+	if (children.length === 0) return 0;
+
+	const exited = Promise.all(children.map((child) => once(child, "exit")));
+
+	for (const child of children) {
+		child.kill("SIGINT");
+	}
+
+	const timedOut = await Promise.race([exited.then(() => false), sleep(graceMs, true, { ref: false })]);
+
+	if (timedOut) {
+		for (const child of children) {
+			if (!hasExited(child)) child.kill("SIGKILL");
+		}
+		await exited;
+	}
+
+	return children.length;
+};
+
 export const safeExec = async ({ command, args = [], env = {}, ...rest }: ExecProps) => {
 	const options = {
 		env: { ...process.env, ...env },
 	};
 
 	try {
-		const { stdout, stderr } = await promisify(execFile)(command, args, {
+		const execution = promisify(execFile)(command, args, {
 			...options,
 			...rest,
 			shell: false,
 			encoding: "utf8",
 		});
+		trackChild(execution.child);
+		const { stdout, stderr } = await execution;
 
 		return { exitCode: 0, stdout: stdout.toString(), stderr: stderr.toString(), timedOut: false };
 	} catch (error) {
@@ -114,6 +158,7 @@ export function safeSpawn(params: SafeSpawnParams): Promise<SpawnResult> {
 			signal: signal,
 			stdio: ["ignore", "pipe", "pipe"],
 		});
+		trackChild(child);
 
 		if (priority === "background") {
 			setBackgroundPriority(child.pid);

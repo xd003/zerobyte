@@ -1,16 +1,28 @@
 import { Scheduler } from "../../core/scheduler";
 import { withContext } from "../../core/request-context";
 import { db } from "../../db/db";
-import { logger } from "@zerobyte/core/node";
+import { logger, terminateChildProcesses } from "@zerobyte/core/node";
 import { LOCAL_AGENT_ID } from "../agents/constants";
 import { volumeService } from "../volumes/volume.service";
 import { toMessage } from "../../utils/errors";
 import { cleanupDanglingVolumeMountDirectories } from "../volumes/volume-host/cleanup";
 import { stopApplicationRuntime } from "./bootstrap";
+import { cancelAllTaskExecutionsForShutdown } from "../tasks/tasks.lifecycle";
 
 export const shutdown = async () => {
 	await Scheduler.stop();
-	await stopApplicationRuntime();
+
+	const cancelledTasks = cancelAllTaskExecutionsForShutdown();
+	if (cancelledTasks > 0) {
+		logger.info(`Cancelled ${cancelledTasks} running task(s) for shutdown`);
+	}
+
+	// Let restic exit on its own so it releases repository locks before the container is torn down.
+	// The local agent interrupts its own restic processes when it receives SIGTERM.
+	const [interruptedChildren] = await Promise.all([terminateChildProcesses(), stopApplicationRuntime()]);
+	if (interruptedChildren > 0) {
+		logger.info(`Interrupted ${interruptedChildren} child process(es) for shutdown`);
+	}
 
 	const volumes = await db.query.volumesTable.findMany({
 		where: {

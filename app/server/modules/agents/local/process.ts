@@ -46,7 +46,8 @@ export const stopLocalAgentProcess = (child: ChildProcess, exited = waitForLocal
 		}
 
 		yield* Effect.sync(() => signalAgent(child));
-		const gracefulExit = yield* exited.pipe(Effect.interruptible, Effect.timeoutOption(5_000));
+		// Longer than the agent's restic interrupt grace (terminateChildProcesses) so restic can release its locks.
+		const gracefulExit = yield* exited.pipe(Effect.interruptible, Effect.timeoutOption(20_000));
 		if (Option.isNone(gracefulExit)) {
 			yield* logger.effect.warn("Local agent did not stop gracefully; forcing shutdown");
 		}

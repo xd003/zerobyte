@@ -166,7 +166,7 @@ test("waits for confirmed exit after forcing shutdown", async () => {
 	const stopping = stopLocalAgent().then(() => {
 		stopped = true;
 	});
-	await vi.advanceTimersByTimeAsync(5_000);
+	await vi.advanceTimersByTimeAsync(20_000);
 
 	expect(child.kill).toHaveBeenNthCalledWith(1);
 	expect(child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
@@ -190,11 +190,11 @@ test.each(["exit", "close"])(
 		await startLocalAgent();
 
 		const stopping = expect(stopLocalAgent()).rejects.toThrow("termination was not confirmed after SIGKILL");
-		await vi.advanceTimersByTimeAsync(10_000);
+		await vi.advanceTimersByTimeAsync(25_000);
 		await stopping;
 
 		const starting = expect(startLocalAgent()).rejects.toThrow("termination was not confirmed after SIGKILL");
-		await vi.advanceTimersByTimeAsync(10_000);
+		await vi.advanceTimersByTimeAsync(25_000);
 		await starting;
 		expect(spawnMock).toHaveBeenCalledOnce();
 
@@ -366,7 +366,7 @@ test("controller shutdown still closes the controller when worker termination ti
 	await startLocalAgent();
 
 	const stopping = expect(stopAgentController()).rejects.toThrow("termination was not confirmed after SIGKILL");
-	await vi.advanceTimersByTimeAsync(10_000);
+	await vi.advanceTimersByTimeAsync(25_000);
 	await stopping;
 
 	expect(stoppedController).toHaveBeenCalledOnce();
@@ -392,7 +392,7 @@ test("reports both worker and controller shutdown failures", async () => {
 			expect.objectContaining({ message: "controller stop failed" }),
 		],
 	});
-	await vi.advanceTimersByTimeAsync(10_000);
+	await vi.advanceTimersByTimeAsync(25_000);
 	await stopping;
 
 	child.exitCode = 137;

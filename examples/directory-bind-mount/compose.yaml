@@ -3,6 +3,7 @@ services:
     image: ghcr.io/nicotsx/zerobyte:latest
     container_name: zerobyte
     restart: unless-stopped
+    stop_grace_period: 30s
     ports:
       - "4096:4096"
     environment:

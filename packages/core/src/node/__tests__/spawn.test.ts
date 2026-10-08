@@ -1,5 +1,9 @@
-import { describe, expect, test } from "vitest";
-import { safeExec, safeSpawn } from "../spawn";
+import { existsSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { describe, expect, test, vi } from "vitest";
+import { safeExec, safeSpawn, terminateChildProcesses } from "../spawn";
 
 describe("safeExec", () => {
 	test("falls back to the process error message when stderr is empty", async () => {
@@ -349,5 +353,58 @@ describe("safeSpawn", () => {
 
 			expect(lines).toEqual([expected]);
 		});
+	});
+});
+
+// These tests signal real child processes, so the grace period runs on the real clock.
+describe("terminateChildProcesses", () => {
+	const startSpawnedChild = (script: string) => {
+		const ready = Promise.withResolvers<void>();
+		const completion = safeSpawn({
+			command: process.execPath,
+			args: ["-e", `${script}; console.log("ready"); setInterval(() => {}, 1000);`],
+			onStdout: (line) => {
+				if (line === "ready") ready.resolve();
+			},
+		});
+		return { ready: ready.promise, completion };
+	};
+
+	test("sends SIGINT and waits for the child to finish its own cleanup", async () => {
+		const { ready, completion } = startSpawnedChild(
+			'process.on("SIGINT", () => setTimeout(() => { console.log("cleaned up"); process.exit(130); }, 100))',
+		);
+		await ready;
+
+		const interrupted = await terminateChildProcesses(5_000);
+		const result = await completion;
+
+		expect(interrupted).toBe(1);
+		expect(result).toMatchObject({ exitCode: 130, summary: "cleaned up" });
+	});
+
+	test("interrupts children started through safeExec", async () => {
+		const readyFile = path.join(await mkdtemp(path.join(tmpdir(), "zerobyte-spawn-")), "ready");
+		const completion = safeExec({
+			command: process.execPath,
+			args: [
+				"-e",
+				`process.on("SIGINT", () => { console.log("interrupted"); process.exit(0); }); require("node:fs").writeFileSync(${JSON.stringify(readyFile)}, ""); setInterval(() => {}, 1000);`,
+			],
+		});
+		await vi.waitFor(() => expect(existsSync(readyFile)).toBe(true));
+
+		expect(await terminateChildProcesses(5_000)).toBe(1);
+		expect(await completion).toMatchObject({ exitCode: 0, stdout: "interrupted\n" });
+	});
+
+	test("kills children that are still running after the grace period", async () => {
+		const { ready, completion } = startSpawnedChild('process.on("SIGINT", () => {})');
+		await ready;
+
+		await terminateChildProcesses(100);
+
+		expect((await completion).exitCode).toBe(-1);
+		expect(await terminateChildProcesses(100)).toBe(0);
 	});
 });

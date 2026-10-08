@@ -114,6 +114,7 @@ services:
     image: ghcr.io/nicotsx/zerobyte:v0.43
     container_name: zerobyte
     restart: unless-stopped
+    stop_grace_period: 30s
     # ... other configuration ...
     volumes:
       - /etc/localtime:/etc/localtime:ro

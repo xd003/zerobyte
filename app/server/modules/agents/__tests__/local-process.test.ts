@@ -52,5 +52,5 @@ test.skipIf(process.platform === "win32").each(["graceful", "forced", "already-e
 			await rm(directory, { recursive: true, force: true });
 		}
 	},
-	15_000,
+	30_000,
 );

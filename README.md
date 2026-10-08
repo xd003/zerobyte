@@ -53,6 +53,7 @@ services:
     image: ghcr.io/nicotsx/zerobyte:v0.43
     container_name: zerobyte
     restart: unless-stopped
+    stop_grace_period: 30s
     cap_add:
       - SYS_ADMIN
     ports:
@@ -178,6 +179,7 @@ services:
     image: ghcr.io/nicotsx/zerobyte:v0.43
     container_name: zerobyte
     restart: unless-stopped
+    stop_grace_period: 30s
     ports:
       - "4096:4096"
     environment:
@@ -217,6 +219,7 @@ services:
     image: ghcr.io/nicotsx/zerobyte:v0.43
     container_name: zerobyte
     restart: unless-stopped
+    stop_grace_period: 30s
     cap_add:
       - SYS_ADMIN
     ports:
@@ -292,6 +295,7 @@ Zerobyte can use [rclone](https://rclone.org/) to support 40+ cloud storage prov
        image: ghcr.io/nicotsx/zerobyte:v0.43
        container_name: zerobyte
        restart: unless-stopped
+       stop_grace_period: 30s
        cap_add:
          - SYS_ADMIN
        ports:

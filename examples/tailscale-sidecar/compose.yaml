@@ -35,6 +35,7 @@ services:
     image: ghcr.io/nicotsx/zerobyte:latest
     container_name: zerobyte
     restart: unless-stopped
+    stop_grace_period: 30s
     # Uncomment if you need to mount NFS/SMB/WebDAV volumes:
     # cap_add:
     #   - SYS_ADMIN

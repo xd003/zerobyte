@@ -30,21 +30,23 @@ type TaskLifecycleOptions<TResult extends TaskResult> = {
 };
 
 const TASK_CANCELLED_ERROR = "Task was cancelled by the user";
+const TASK_SHUTDOWN_ERROR = "Task was interrupted by server shutdown";
 
 type TaskExecution = {
-	cancel: () => void;
+	cancel: (message?: string) => void;
 	cancellable: boolean;
 };
 
 const taskExecutions = new Map<string, TaskExecution>();
 const deferredTerminalEvent = { emitHistoryChanged: false };
+let isShuttingDown = false;
 
 const logTransitionConflict = (label: string, taskId: string, error: TaskTransitionConflictError) => {
 	const currentStatus = error.currentTask?.status ?? "missing";
 	logger.info(`Stopped ${label} ${taskId}; task is already ${currentStatus}`);
 };
 
-export const registerTaskExecution = (taskId: string, cancel: () => void, cancellable: boolean) => {
+export const registerTaskExecution = (taskId: string, cancel: TaskExecution["cancel"], cancellable: boolean) => {
 	const execution = { cancel, cancellable };
 	taskExecutions.set(taskId, execution);
 
@@ -53,6 +55,18 @@ export const registerTaskExecution = (taskId: string, cancel: () => void, cancel
 			taskExecutions.delete(taskId);
 		}
 	};
+};
+
+/**
+ * Aborts every running or queued task, including non-cancellable ones, and cancels any task started afterwards.
+ * Returns the number of executions that were aborted.
+ */
+export const cancelAllTaskExecutionsForShutdown = () => {
+	isShuttingDown = true;
+	for (const execution of taskExecutions.values()) {
+		execution.cancel(TASK_SHUTDOWN_ERROR);
+	}
+	return taskExecutions.size;
 };
 
 const failTask = async <TResult extends TaskResult>(options: TaskLifecycleOptions<TResult>, errorMessage: string) => {
@@ -150,8 +164,11 @@ export const requestTaskCancel = (taskId: string) => {
 export const runTaskLifecycle = async <TResult extends TaskResult>(options: TaskLifecycleOptions<TResult>) => {
 	const abortController = new AbortController();
 	const cancellable = options.cancellable === true;
-	const cancelExecution = () => abortController.abort(new TaskCancelledError(TASK_CANCELLED_ERROR));
+	const cancelExecution = (message = TASK_CANCELLED_ERROR) => abortController.abort(new TaskCancelledError(message));
 	const unregisterExecution = registerTaskExecution(options.taskId, cancelExecution, cancellable);
+	if (isShuttingDown) {
+		cancelExecution(TASK_SHUTDOWN_ERROR);
+	}
 	let cleanup: (() => void) | undefined;
 
 	try {

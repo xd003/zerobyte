@@ -1,4 +1,4 @@
-export { safeSpawn, safeExec } from "./spawn.js";
+export { safeSpawn, safeExec, terminateChildProcesses } from "./spawn.js";
 export type { SafeSpawnParams, SafeSpawnParamsLines, SafeSpawnParamsRaw, SpawnResult } from "./spawn.js";
 export { logger } from "./logger.js";
 export { sanitizeSensitiveData } from "../utils/sanitize.js";

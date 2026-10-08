@@ -1,4 +1,4 @@
-import { logger } from "@zerobyte/core/node";
+import { logger, terminateChildProcesses } from "@zerobyte/core/node";
 import { createControllerSession, type ControllerSession } from "./controller-session";
 
 const controllerUrl = process.env.ZEROBYTE_CONTROLLER_URL;
@@ -96,4 +96,16 @@ if (import.meta.main) {
 	}
 
 	agent.connect();
+
+	// Let restic release its repository locks before this process (and its container) goes away.
+	const shutdown = async (signal: NodeJS.Signals) => {
+		logger.info(`${signal} received, interrupting running restic processes...`);
+		try {
+			await terminateChildProcesses();
+		} finally {
+			process.exit(0);
+		}
+	};
+	process.once("SIGTERM", shutdown);
+	process.once("SIGINT", shutdown);
 }
